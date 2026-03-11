@@ -46,6 +46,44 @@ Open your browser and go to: http://localhost:5201
 
 Log in with the admin key from earlier, then you can add your Claude account~
 
+## 🐳 Docker Images
+
+### GitHub auto-published image
+
+The repository already includes [docker-publish.yml](./.github/workflows/docker-publish.yml), which publishes images to `GHCR` whenever you push to `main` or publish a version tag:
+
+```text
+ghcr.io/<your-github-username>/<repository-name>
+```
+
+For this fork, the image path is:
+
+```text
+ghcr.io/wosa1402/clove-p:main
+ghcr.io/wosa1402/clove-p:latest
+```
+
+During the workflow build, the bundled `warp` binary from the repository root is baked into the image, so WARP IP management works inside the container without an extra install step.
+
+### Build locally
+
+If your local branch does not include the `warp` file yet, pass `WARP_BINARY_URL` explicitly at build time:
+
+```bash
+docker build \
+  --build-arg WARP_BINARY_URL=https://raw.githubusercontent.com/wosa1402/clove-p/main/warp \
+  -t clove:local .
+```
+
+The provided `docker-compose.yml` also accepts the same build argument:
+
+```bash
+export WARP_BINARY_URL=https://raw.githubusercontent.com/wosa1402/clove-p/main/warp
+docker compose up -d --build
+```
+
+At runtime, Clove will automatically pick `/app/warp`, so no manual installation is required inside the container.
+
 ## ✨ Core Features
 
 ### 🔐 Dual Mode Operation

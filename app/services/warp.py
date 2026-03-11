@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from loguru import logger
 
 from app.core.config import settings
+from app.core.http_client import create_session
 from app.core.warp_instance import WarpInstance, WarpInstanceStatus
 
 
@@ -369,14 +370,18 @@ class WarpManager:
         self, instance: WarpInstance, check_url: str, ip_family: str
     ) -> str:
         """Detect a public egress IP through the WARP SOCKS5 proxy."""
-        import httpx
+        async with create_session(timeout=15, proxy=instance.proxy_url) as session:
+            response = await session.request("GET", check_url)
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"{ip_family} probe returned status {response.status_code}"
+                )
 
-        async with httpx.AsyncClient(
-            proxy=instance.proxy_url, timeout=15
-        ) as client:
-            response = await client.get(check_url)
-            response.raise_for_status()
-            ip = response.text.strip()
+            content = b""
+            async for chunk in response.aiter_bytes():
+                content += chunk
+
+            ip = content.decode("utf-8").strip()
             logger.info(
                 f"Detected {ip_family} for {instance.instance_id}: {ip}"
             )

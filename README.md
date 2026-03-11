@@ -46,6 +46,44 @@ clove
 
 使用刚才的管理密钥登录，然后就可以添加你的 Claude 账户了～
 
+## 🐳 Docker 镜像
+
+### GitHub 自动构建镜像
+
+仓库中的 [docker-publish.yml](./.github/workflows/docker-publish.yml) 已配置为在推送 `main` 或版本标签时自动发布镜像到 `GHCR`：
+
+```text
+ghcr.io/<你的 GitHub 用户名>/<仓库名>
+```
+
+例如当前这个二改仓库会发布到：
+
+```text
+ghcr.io/wosa1402/clove-p:main
+ghcr.io/wosa1402/clove-p:latest
+```
+
+这个流程会在构建时自动把仓库根目录里的 `warp` 二进制打进镜像，因此容器内可以直接启用 WARP IP 功能。
+
+### 本地构建镜像
+
+如果你本地仓库分支里还没有 `warp` 文件，可以在构建时显式传入 `WARP_BINARY_URL`：
+
+```bash
+docker build \
+  --build-arg WARP_BINARY_URL=https://raw.githubusercontent.com/wosa1402/clove-p/main/warp \
+  -t clove:local .
+```
+
+使用 `docker-compose.yml` 时也可以先导出这个环境变量：
+
+```bash
+export WARP_BINARY_URL=https://raw.githubusercontent.com/wosa1402/clove-p/main/warp
+docker compose up -d --build
+```
+
+启动后，Clove 会在镜像内优先使用 `/app/warp`，不需要再进容器手动安装。
+
 ## ✨ 核心功能
 
 ### 🔐 双模式运行
