@@ -33,6 +33,12 @@ class SettingsRead(BaseModel):
     oauth_token_url: str
     oauth_redirect_uri: str
 
+    warp_binary_path: str | None
+    warp_base_port: int
+    warp_max_register_retries: int
+    warp_ip_check_url: str
+    warp_startup_timeout: int
+
 
 class SettingsUpdate(BaseModel):
     """Model for updating settings."""
@@ -58,6 +64,12 @@ class SettingsUpdate(BaseModel):
     oauth_authorize_url: str | None = None
     oauth_token_url: str | None = None
     oauth_redirect_uri: str | None = None
+
+    warp_binary_path: str | None = None
+    warp_base_port: int | None = None
+    warp_max_register_retries: int | None = None
+    warp_ip_check_url: str | None = None
+    warp_startup_timeout: int | None = None
 
 
 router = APIRouter()

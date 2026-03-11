@@ -49,7 +49,9 @@ class WarpManager:
                 try:
                     await self._start_process(instance)
                     await self._wait_for_ready(instance)
+                    instance.public_ip = await self._detect_ip(instance)
                     instance.status = WarpInstanceStatus.RUNNING
+                    instance.error_message = None
                 except Exception as e:
                     logger.error(
                         f"Failed to restart WARP instance {instance.instance_id}: {e}"
@@ -145,8 +147,10 @@ class WarpManager:
             raise ValueError(f"Instance {instance_id} not found")
         await self._start_process(instance)
         await self._wait_for_ready(instance)
+        instance.public_ip = await self._detect_ip(instance)
         instance.status = WarpInstanceStatus.RUNNING
         instance.last_started_at = datetime.now().isoformat()
+        instance.error_message = None
         self._save_instances()
         return instance
 
@@ -342,7 +346,9 @@ class WarpManager:
                         try:
                             await self._start_process(instance)
                             await self._wait_for_ready(instance)
+                            instance.public_ip = await self._detect_ip(instance)
                             instance.status = WarpInstanceStatus.RUNNING
+                            instance.error_message = None
                         except Exception as e:
                             instance.status = WarpInstanceStatus.ERROR
                             instance.error_message = str(e)
