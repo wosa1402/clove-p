@@ -36,7 +36,7 @@ class ClaudeWebClient:
         self.session = create_session(
             timeout=settings.request_timeout,
             impersonate="chrome",
-            proxy=settings.proxy_url,
+            proxy=self.account.proxy_url or settings.proxy_url,
             follow_redirects=False,
         )
 

@@ -52,11 +52,11 @@ class OAuthAuthenticator:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
 
-    async def _request(self, method: str, url: str, **kwargs) -> Response:
+    async def _request(self, method: str, url: str, proxy_url: Optional[str] = None, **kwargs) -> Response:
         session = create_session(
             timeout=settings.request_timeout,
             impersonate="chrome",
-            proxy=settings.proxy_url,
+            proxy=proxy_url or settings.proxy_url,
             follow_redirects=False,
         )
         async with session:
@@ -78,13 +78,15 @@ class OAuthAuthenticator:
 
         return response
 
-    async def get_organization_info(self, cookie: str) -> Tuple[str, List[str]]:
+    async def get_organization_info(
+        self, cookie: str, proxy_url: Optional[str] = None
+    ) -> Tuple[str, List[str]]:
         """Get organization UUID and capabilities."""
         url = f"{settings.claude_ai_url.encoded_string().rstrip('/')}/api/organizations"
         headers = self._build_headers(cookie)
 
         try:
-            response = await self._request("GET", url, headers=headers)
+            response = await self._request("GET", url, proxy_url=proxy_url, headers=headers)
 
             org_data = await response.json()
             if org_data and isinstance(org_data, list):
@@ -124,7 +126,7 @@ class OAuthAuthenticator:
             raise OrganizationInfoError(reason=str(e))
 
     async def authorize_with_cookie(
-        self, cookie: str, organization_uuid: str
+        self, cookie: str, organization_uuid: str, proxy_url: Optional[str] = None
     ) -> Tuple[str, str]:
         """
         Use Cookie to automatically get authorization code.
@@ -158,7 +160,7 @@ class OAuthAuthenticator:
         logger.debug(f"Requesting authorization from: {authorize_url}")
 
         response = await self._request(
-            "POST", authorize_url, json=payload, headers=headers
+            "POST", authorize_url, proxy_url=proxy_url, json=payload, headers=headers
         )
 
         auth_response = await response.json()
@@ -191,7 +193,9 @@ class OAuthAuthenticator:
 
         return full_code, verifier
 
-    async def exchange_token(self, code: str, verifier: str) -> Dict:
+    async def exchange_token(
+        self, code: str, verifier: str, proxy_url: Optional[str] = None
+    ) -> Dict:
         """Exchange authorization code for access token."""
         parts = code.split("#")
         auth_code = parts[0]
@@ -212,6 +216,7 @@ class OAuthAuthenticator:
             response = await self._request(
                 "POST",
                 settings.oauth_token_url,
+                proxy_url=proxy_url,
                 json=data,
                 headers={"Content-Type": "application/json"},
             )
@@ -235,7 +240,9 @@ class OAuthAuthenticator:
             logger.error(f"Error exchanging token: {e}")
             raise OAuthExchangeError(reason=str(e))
 
-    async def refresh_access_token(self, refresh_token: str) -> Optional[Dict]:
+    async def refresh_access_token(
+        self, refresh_token: str, proxy_url: Optional[str] = None
+    ) -> Optional[Dict]:
         """Refresh access token."""
         data = {
             "grant_type": "refresh_token",
@@ -247,6 +254,7 @@ class OAuthAuthenticator:
             response = await self._request(
                 "POST",
                 settings.oauth_token_url,
+                proxy_url=proxy_url,
                 json=data,
                 headers={"Content-Type": "application/json"},
             )
@@ -273,17 +281,21 @@ class OAuthAuthenticator:
 
         try:
             # Get organization UUID
-            org_uuid, _ = await self.get_organization_info(account.cookie_value)
+            org_uuid, _ = await self.get_organization_info(
+                account.cookie_value, proxy_url=account.proxy_url
+            )
 
             # Get authorization code
             auth_result = await self.authorize_with_cookie(
-                account.cookie_value, org_uuid
+                account.cookie_value, org_uuid, proxy_url=account.proxy_url
             )
 
             auth_code, verifier = auth_result
 
             # Exchange for tokens
-            token_data = await self.exchange_token(auth_code, verifier)
+            token_data = await self.exchange_token(
+                auth_code, verifier, proxy_url=account.proxy_url
+            )
 
             # Update account with OAuth tokens
             account.oauth_token = OAuthToken(
@@ -312,7 +324,9 @@ class OAuthAuthenticator:
             logger.error("Account has no refresh token")
             return False
 
-        token_data = await self.refresh_access_token(account.oauth_token.refresh_token)
+        token_data = await self.refresh_access_token(
+            account.oauth_token.refresh_token, proxy_url=account.proxy_url
+        )
         if not token_data:
             return False
 

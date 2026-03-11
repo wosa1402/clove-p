@@ -7,7 +7,7 @@ import time
 from app.core.exceptions import OAuthExchangeError
 from app.dependencies.auth import AdminAuthDep
 from app.services.account import account_manager
-from app.core.account import AuthType, AccountStatus, OAuthToken
+from app.core.account import Account, AuthType, AccountStatus, OAuthToken
 from app.services.oauth import oauth_authenticator
 
 
@@ -29,6 +29,7 @@ class AccountUpdate(BaseModel):
     oauth_token: Optional[OAuthTokenCreate] = None
     capabilities: Optional[List[str]] = None
     status: Optional[AccountStatus] = None
+    proxy_url: Optional[str] = None
 
 
 class OAuthCodeExchange(BaseModel):
@@ -49,47 +50,12 @@ class AccountResponse(BaseModel):
     has_oauth: bool
     last_used: str
     resets_at: Optional[str] = None
+    proxy_url: Optional[str] = None
 
 
-router = APIRouter()
-
-
-@router.get("", response_model=List[AccountResponse])
-async def list_accounts(_: AdminAuthDep):
-    """List all accounts."""
-    accounts = []
-
-    for org_uuid, account in account_manager._accounts.items():
-        accounts.append(
-            AccountResponse(
-                organization_uuid=org_uuid,
-                capabilities=account.capabilities,
-                cookie_value=account.cookie_value[:20] + "..."
-                if account.cookie_value
-                else None,
-                status=account.status,
-                auth_type=account.auth_type,
-                is_pro=account.is_pro,
-                is_max=account.is_max,
-                has_oauth=account.oauth_token is not None,
-                last_used=account.last_used.isoformat(),
-                resets_at=account.resets_at.isoformat() if account.resets_at else None,
-            )
-        )
-
-    return accounts
-
-
-@router.get("/{organization_uuid}", response_model=AccountResponse)
-async def get_account(organization_uuid: str, _: AdminAuthDep):
-    """Get a specific account by organization UUID."""
-    if organization_uuid not in account_manager._accounts:
-        raise HTTPException(status_code=404, detail="Account not found")
-
-    account = account_manager._accounts[organization_uuid]
-
+def _account_to_response(account: Account) -> AccountResponse:
     return AccountResponse(
-        organization_uuid=organization_uuid,
+        organization_uuid=account.organization_uuid,
         capabilities=account.capabilities,
         cookie_value=account.cookie_value[:20] + "..."
         if account.cookie_value
@@ -101,7 +67,29 @@ async def get_account(organization_uuid: str, _: AdminAuthDep):
         has_oauth=account.oauth_token is not None,
         last_used=account.last_used.isoformat(),
         resets_at=account.resets_at.isoformat() if account.resets_at else None,
+        proxy_url=account.proxy_url,
     )
+
+
+router = APIRouter()
+
+
+@router.get("", response_model=List[AccountResponse])
+async def list_accounts(_: AdminAuthDep):
+    """List all accounts."""
+    return [
+        _account_to_response(account)
+        for account in account_manager._accounts.values()
+    ]
+
+
+@router.get("/{organization_uuid}", response_model=AccountResponse)
+async def get_account(organization_uuid: str, _: AdminAuthDep):
+    """Get a specific account by organization UUID."""
+    if organization_uuid not in account_manager._accounts:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    return _account_to_response(account_manager._accounts[organization_uuid])
 
 
 @router.post("", response_model=AccountResponse)
@@ -122,20 +110,7 @@ async def create_account(account_data: AccountCreate, _: AdminAuthDep):
         capabilities=account_data.capabilities,
     )
 
-    return AccountResponse(
-        organization_uuid=account.organization_uuid,
-        capabilities=account.capabilities,
-        cookie_value=account.cookie_value[:20] + "..."
-        if account.cookie_value
-        else None,
-        status=account.status,
-        auth_type=account.auth_type,
-        is_pro=account.is_pro,
-        is_max=account.is_max,
-        has_oauth=account.oauth_token is not None,
-        last_used=account.last_used.isoformat(),
-        resets_at=account.resets_at.isoformat() if account.resets_at else None,
-    )
+    return _account_to_response(account)
 
 
 @router.put("/{organization_uuid}", response_model=AccountResponse)
@@ -182,23 +157,13 @@ async def update_account(
         if account.status == AccountStatus.VALID:
             account.resets_at = None
 
+    if account_data.proxy_url is not None:
+        account.proxy_url = account_data.proxy_url if account_data.proxy_url else None
+
     # Save changes
     account_manager.save_accounts()
 
-    return AccountResponse(
-        organization_uuid=organization_uuid,
-        capabilities=account.capabilities,
-        cookie_value=account.cookie_value[:20] + "..."
-        if account.cookie_value
-        else None,
-        status=account.status,
-        auth_type=account.auth_type,
-        is_pro=account.is_pro,
-        is_max=account.is_max,
-        has_oauth=account.oauth_token is not None,
-        last_used=account.last_used.isoformat(),
-        resets_at=account.resets_at.isoformat() if account.resets_at else None,
-    )
+    return _account_to_response(account)
 
 
 @router.delete("/{organization_uuid}")
@@ -237,15 +202,4 @@ async def exchange_oauth_code(exchange_data: OAuthCodeExchange, _: AdminAuthDep)
         capabilities=exchange_data.capabilities,
     )
 
-    return AccountResponse(
-        organization_uuid=account.organization_uuid,
-        capabilities=account.capabilities,
-        cookie_value=None,
-        status=account.status,
-        auth_type=account.auth_type,
-        is_pro=account.is_pro,
-        is_max=account.is_max,
-        has_oauth=True,
-        last_used=account.last_used.isoformat(),
-        resets_at=account.resets_at.isoformat() if account.resets_at else None,
-    )
+    return _account_to_response(account)

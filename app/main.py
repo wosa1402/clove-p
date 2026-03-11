@@ -13,6 +13,7 @@ from app.services.account import account_manager
 from app.services.session import session_manager
 from app.services.tool_call import tool_call_manager
 from app.services.cache import cache_service
+from app.services.warp import warp_manager
 
 
 @asynccontextmanager
@@ -34,9 +35,15 @@ async def lifespan(app: FastAPI):
     await tool_call_manager.start_cleanup_task()
     await cache_service.start_cleanup_task()
 
+    # Start WARP manager
+    await warp_manager.start()
+
     yield
 
     logger.info("Shutting down Clove...")
+
+    # Stop WARP manager
+    await warp_manager.stop()
 
     # Save accounts
     account_manager.save_accounts()

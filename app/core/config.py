@@ -112,6 +112,33 @@ class Settings(BaseSettings):
     # Proxy settings
     proxy_url: Optional[str] = Field(default=None, env="PROXY_URL")
 
+    # WARP settings
+    warp_binary_path: Optional[str] = Field(
+        default=None,
+        env="WARP_BINARY_PATH",
+        description="Path to the cloudflare-warp binary. If not set, looks in data_folder/warp or system PATH.",
+    )
+    warp_base_port: int = Field(
+        default=10000,
+        env="WARP_BASE_PORT",
+        description="Base port number for WARP SOCKS5 proxy instances.",
+    )
+    warp_max_register_retries: int = Field(
+        default=5,
+        env="WARP_MAX_REGISTER_RETRIES",
+        description="Maximum retries when registering a new WARP instance to get a unique IP.",
+    )
+    warp_ip_check_url: str = Field(
+        default="https://api.ipify.org",
+        env="WARP_IP_CHECK_URL",
+        description="URL used to detect the public egress IP of a WARP instance.",
+    )
+    warp_startup_timeout: int = Field(
+        default=30,
+        env="WARP_STARTUP_TIMEOUT",
+        description="Seconds to wait for a WARP process to become ready.",
+    )
+
     # API Keys
     api_keys: List[str] | str = Field(
         default_factory=list,

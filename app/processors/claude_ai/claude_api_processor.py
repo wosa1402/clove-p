@@ -99,7 +99,7 @@ class ClaudeAPIProcessor(BaseProcessor):
                 )
 
                 session = create_session(
-                    proxy=settings.proxy_url,
+                    proxy=account.proxy_url or settings.proxy_url,
                     timeout=settings.request_timeout,
                     impersonate="chrome",
                     follow_redirects=False,

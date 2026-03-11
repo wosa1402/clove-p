@@ -68,6 +68,7 @@ class Account:
         self.last_used = datetime.now()
         self.resets_at: Optional[datetime] = None
         self.oauth_token: Optional[OAuthToken] = oauth_token
+        self.proxy_url: Optional[str] = None
 
     def __enter__(self) -> "Account":
         """Enter the context manager."""
@@ -122,6 +123,7 @@ class Account:
             "last_used": self.last_used.isoformat(),
             "resets_at": self.resets_at.isoformat() if self.resets_at else None,
             "oauth_token": self.oauth_token.to_dict() if self.oauth_token else None,
+            "proxy_url": self.proxy_url,
         }
 
     @classmethod
@@ -141,6 +143,8 @@ class Account:
 
         if "oauth_token" in data and data["oauth_token"]:
             account.oauth_token = OAuthToken.from_dict(data["oauth_token"])
+
+        account.proxy_url = data.get("proxy_url")
 
         return account
 

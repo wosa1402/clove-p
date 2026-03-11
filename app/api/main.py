@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.routes import claude, accounts, settings, statistics
+from app.api.routes import claude, accounts, settings, statistics, warp
 
 api_router = APIRouter()
 
@@ -12,4 +12,7 @@ api_router.include_router(
 )
 api_router.include_router(
     statistics.router, prefix="/api/admin/statistics", tags=["Statistics"]
+)
+api_router.include_router(
+    warp.router, prefix="/api/admin/warp", tags=["WARP Management"]
 )
