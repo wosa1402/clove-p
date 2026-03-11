@@ -120,6 +120,22 @@ async def bind_warp_to_account(
         raise HTTPException(status_code=404, detail="Account not found")
 
     account = account_manager._accounts[organization_uuid]
+    if account.proxy_url and account.proxy_url != instance.proxy_url:
+        bound_instance = next(
+            (
+                warp_instance.instance_id
+                for warp_instance in warp_manager.get_all_instances()
+                if warp_instance.proxy_url == account.proxy_url
+            ),
+            None,
+        )
+        conflict_message = "该 Claude 账户已绑定到其他 WARP 实例，请先解绑后再重新分配"
+        if bound_instance:
+            conflict_message = (
+                f"该 Claude 账户已绑定到 {bound_instance}，请先解绑后再重新分配"
+            )
+        raise HTTPException(status_code=409, detail=conflict_message)
+
     account.proxy_url = instance.proxy_url
     account_manager.save_accounts()
 
