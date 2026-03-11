@@ -13,6 +13,8 @@ class WarpInstanceResponse(BaseModel):
     port: int
     proxy_url: str
     public_ip: Optional[str]
+    public_ipv4: Optional[str]
+    public_ipv6: Optional[str]
     status: WarpInstanceStatus
     created_at: Optional[str]
     last_started_at: Optional[str]
@@ -31,6 +33,8 @@ def _instance_to_response(inst) -> WarpInstanceResponse:
         port=inst.port,
         proxy_url=inst.proxy_url,
         public_ip=inst.public_ip,
+        public_ipv4=inst.public_ipv4,
+        public_ipv6=inst.public_ipv6,
         status=inst.status,
         created_at=inst.created_at,
         last_started_at=inst.last_started_at,

@@ -37,6 +37,7 @@ class SettingsRead(BaseModel):
     warp_base_port: int
     warp_max_register_retries: int
     warp_ip_check_url: str
+    warp_ip_check_url_v6: str
     warp_startup_timeout: int
 
 
@@ -69,6 +70,7 @@ class SettingsUpdate(BaseModel):
     warp_base_port: int | None = None
     warp_max_register_retries: int | None = None
     warp_ip_check_url: str | None = None
+    warp_ip_check_url_v6: str | None = None
     warp_startup_timeout: int | None = None
 
 

@@ -49,7 +49,7 @@ class WarpManager:
                 try:
                     await self._start_process(instance)
                     await self._wait_for_ready(instance)
-                    instance.public_ip = await self._detect_ip(instance)
+                    await self._refresh_public_ips(instance)
                     instance.status = WarpInstanceStatus.RUNNING
                     instance.error_message = None
                 except Exception as e:
@@ -97,9 +97,8 @@ class WarpManager:
                 try:
                     await self._start_process(instance)
                     await self._wait_for_ready(instance)
-
-                    public_ip = await self._detect_ip(instance)
-                    instance.public_ip = public_ip
+                    await self._refresh_public_ips(instance)
+                    public_ip = instance.public_ip
 
                     if public_ip in existing_ips:
                         logger.warning(
@@ -114,7 +113,8 @@ class WarpManager:
                     self._save_instances()
                     logger.info(
                         f"Registered WARP instance {instance.instance_id} "
-                        f"on port {instance.port} with IP {public_ip}"
+                        f"on port {instance.port} with IPv4 {instance.public_ipv4 or '-'} "
+                        f"and IPv6 {instance.public_ipv6 or '-'}"
                     )
                     return instance
 
@@ -147,7 +147,7 @@ class WarpManager:
             raise ValueError(f"Instance {instance_id} not found")
         await self._start_process(instance)
         await self._wait_for_ready(instance)
-        instance.public_ip = await self._detect_ip(instance)
+        await self._refresh_public_ips(instance)
         instance.status = WarpInstanceStatus.RUNNING
         instance.last_started_at = datetime.now().isoformat()
         instance.error_message = None
@@ -304,17 +304,56 @@ class WarpManager:
             f"ready within {timeout}s"
         )
 
-    async def _detect_ip(self, instance: WarpInstance) -> str:
-        """Detect the public egress IP through the WARP SOCKS5 proxy."""
+    async def _refresh_public_ips(self, instance: WarpInstance) -> None:
+        """Refresh both IPv4 and IPv6 public egress addresses."""
+        ipv4: Optional[str] = None
+        ipv6: Optional[str] = None
+        errors: List[str] = []
+
+        try:
+            ipv4 = await self._detect_ip(
+                instance, settings.warp_ip_check_url, "IPv4"
+            )
+        except Exception as e:
+            errors.append(f"IPv4: {e}")
+            logger.warning(
+                f"Failed to detect IPv4 for {instance.instance_id}: {e}"
+            )
+
+        try:
+            ipv6 = await self._detect_ip(
+                instance, settings.warp_ip_check_url_v6, "IPv6"
+            )
+        except Exception as e:
+            errors.append(f"IPv6: {e}")
+            logger.warning(
+                f"Failed to detect IPv6 for {instance.instance_id}: {e}"
+            )
+
+        if not ipv4 and not ipv6:
+            raise RuntimeError(
+                f"Failed to detect public IPs for {instance.instance_id}: "
+                + "; ".join(errors)
+            )
+
+        instance.public_ipv4 = ipv4
+        instance.public_ipv6 = ipv6
+
+    async def _detect_ip(
+        self, instance: WarpInstance, check_url: str, ip_family: str
+    ) -> str:
+        """Detect a public egress IP through the WARP SOCKS5 proxy."""
         import httpx
 
         async with httpx.AsyncClient(
             proxy=instance.proxy_url, timeout=15
         ) as client:
-            response = await client.get(settings.warp_ip_check_url)
+            response = await client.get(check_url)
             response.raise_for_status()
             ip = response.text.strip()
-            logger.info(f"Detected IP for {instance.instance_id}: {ip}")
+            logger.info(
+                f"Detected {ip_family} for {instance.instance_id}: {ip}"
+            )
             return ip
 
     async def _log_process_output(
@@ -346,7 +385,7 @@ class WarpManager:
                         try:
                             await self._start_process(instance)
                             await self._wait_for_ready(instance)
-                            instance.public_ip = await self._detect_ip(instance)
+                            await self._refresh_public_ips(instance)
                             instance.status = WarpInstanceStatus.RUNNING
                             instance.error_message = None
                         except Exception as e:

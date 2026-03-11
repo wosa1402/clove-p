@@ -131,7 +131,12 @@ class Settings(BaseSettings):
     warp_ip_check_url: str = Field(
         default="https://api.ipify.org",
         env="WARP_IP_CHECK_URL",
-        description="URL used to detect the public egress IP of a WARP instance.",
+        description="URL used to detect the public IPv4 egress IP of a WARP instance.",
+    )
+    warp_ip_check_url_v6: str = Field(
+        default="https://api6.ipify.org",
+        env="WARP_IP_CHECK_URL_V6",
+        description="URL used to detect the public IPv6 egress IP of a WARP instance.",
     )
     warp_startup_timeout: int = Field(
         default=30,
