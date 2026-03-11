@@ -116,7 +116,7 @@ class Settings(BaseSettings):
     warp_binary_path: Optional[str] = Field(
         default=None,
         env="WARP_BINARY_PATH",
-        description="Path to the cloudflare-warp binary. If not set, looks in data_folder/warp or system PATH.",
+        description="Path to the cloudflare-warp binary. If not set, looks in data_folder/warp, project_root/warp, or system PATH.",
     )
     warp_base_port: int = Field(
         default=10000,

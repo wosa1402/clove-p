@@ -179,14 +179,39 @@ class WarpManager:
 
     # --- Internal helpers ---
 
+    def _ensure_executable(self, candidate: Path) -> Optional[str]:
+        """Return an executable binary path, adding execute permission when possible."""
+        if not candidate.exists() or not candidate.is_file():
+            return None
+
+        candidate_str = str(candidate)
+        if os.access(candidate_str, os.X_OK):
+            return candidate_str
+
+        try:
+            candidate.chmod(candidate.stat().st_mode | 0o111)
+        except OSError as e:
+            logger.warning(f"Failed to chmod WARP binary {candidate}: {e}")
+            return None
+
+        if os.access(candidate_str, os.X_OK):
+            logger.info(f"Enabled execute permission for bundled WARP binary: {candidate}")
+            return candidate_str
+
+        return None
+
     def _get_warp_binary(self) -> str:
         """Resolve the path to the warp binary."""
         if settings.warp_binary_path:
             return settings.warp_binary_path
 
         data_path = Path(settings.data_folder) / "warp"
-        if data_path.exists() and os.access(str(data_path), os.X_OK):
-            return str(data_path)
+        bundled_path = Path(__file__).resolve().parents[2] / "warp"
+
+        for candidate in (data_path, bundled_path):
+            resolved = self._ensure_executable(candidate)
+            if resolved:
+                return resolved
 
         warp_in_path = shutil.which("warp")
         if warp_in_path:
@@ -194,7 +219,8 @@ class WarpManager:
 
         raise FileNotFoundError(
             "WARP binary not found. Set WARP_BINARY_PATH, "
-            "place binary in data_folder/warp, or ensure 'warp' is in PATH."
+            "place binary in data_folder/warp or project_root/warp, "
+            "or ensure 'warp' is in PATH."
         )
 
     def _get_warp_data_dir(self) -> Path:
