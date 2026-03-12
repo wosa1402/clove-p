@@ -7,7 +7,7 @@ import signal
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from loguru import logger
 
@@ -79,13 +79,20 @@ class WarpManager:
 
     # --- Core operations ---
 
-    async def register_new_instance(self) -> WarpInstance:
+    async def register_new_instance(
+        self,
+        register_proxy_mode: Literal["default", "direct", "custom"] = "default",
+        register_proxy_url: Optional[str] = None,
+    ) -> WarpInstance:
         """
         Register a new WARP identity, start the tunnel, detect IP.
         Retries up to max_retries if IP is a duplicate.
         """
         async with self._register_lock:
             max_retries = settings.warp_max_register_retries
+            resolved_register_proxy_url = self._resolve_register_proxy_url(
+                register_proxy_mode, register_proxy_url
+            )
             existing_ips = {
                 inst.public_ip
                 for inst in self._instances.values()
@@ -97,7 +104,15 @@ class WarpManager:
                 instance = self._create_instance_metadata()
 
                 try:
-                    await self._start_process(instance)
+                    await self._start_process(
+                        instance,
+                        register_proxy_mode=(
+                            "custom"
+                            if resolved_register_proxy_url
+                            else register_proxy_mode
+                        ),
+                        register_proxy_url=resolved_register_proxy_url,
+                    )
                     await self._wait_for_ready(instance)
                     await self._refresh_public_ips(instance)
                     public_ip = instance.public_ip
@@ -178,6 +193,28 @@ class WarpManager:
         if instance and instance.status == WarpInstanceStatus.RUNNING:
             return instance.proxy_url
         return None
+
+    def _resolve_register_proxy_url(
+        self,
+        register_proxy_mode: Literal["default", "direct", "custom"] = "default",
+        register_proxy_url: Optional[str] = None,
+    ) -> Optional[str]:
+        """Resolve the registration proxy URL for this WARP creation attempt."""
+        normalized_mode = (register_proxy_mode or "default").strip().lower()
+
+        if normalized_mode == "default":
+            return settings.warp_register_proxy_url
+
+        if normalized_mode == "direct":
+            return None
+
+        if normalized_mode == "custom":
+            proxy_candidate = (register_proxy_url or "").strip()
+            if not proxy_candidate:
+                raise ValueError("自定义申请代理模式需要提供代理 URL")
+            return proxy_candidate
+
+        raise ValueError("不支持的 WARP 申请代理模式")
 
     # --- Internal helpers ---
 
@@ -276,7 +313,12 @@ class WarpManager:
             created_at=datetime.now().isoformat(),
         )
 
-    async def _start_process(self, instance: WarpInstance) -> None:
+    async def _start_process(
+        self,
+        instance: WarpInstance,
+        register_proxy_mode: Literal["default", "direct", "custom"] = "default",
+        register_proxy_url: Optional[str] = None,
+    ) -> None:
         """Spawn the Go binary as a subprocess."""
         binary = self._get_warp_binary()
         cmd = [
@@ -288,9 +330,11 @@ class WarpManager:
         logger.info(f"Starting WARP process: {' '.join(cmd)}")
 
         env = os.environ.copy()
-        register_proxy_url = settings.warp_register_proxy_url
-        if register_proxy_url:
-            env["WARP_REGISTER_PROXY_URL"] = register_proxy_url
+        resolved_register_proxy_url = self._resolve_register_proxy_url(
+            register_proxy_mode, register_proxy_url
+        )
+        if resolved_register_proxy_url:
+            env["WARP_REGISTER_PROXY_URL"] = resolved_register_proxy_url
         else:
             env.pop("WARP_REGISTER_PROXY_URL", None)
 

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -27,6 +27,11 @@ class WarpBindResponse(BaseModel):
     warp_instance_id: Optional[str]
 
 
+class WarpRegisterRequest(BaseModel):
+    register_proxy_mode: Literal["default", "direct", "custom"] = "default"
+    register_proxy_url: Optional[str] = None
+
+
 def _instance_to_response(inst) -> WarpInstanceResponse:
     return WarpInstanceResponse(
         instance_id=inst.instance_id,
@@ -52,10 +57,19 @@ async def list_warp_instances(_: AdminAuthDep):
 
 
 @router.post("/register", response_model=WarpInstanceResponse)
-async def register_warp_instance(_: AdminAuthDep):
+async def register_warp_instance(
+    _: AdminAuthDep,
+    payload: WarpRegisterRequest | None = None,
+):
     """Register a new WARP instance with a unique public IP."""
+    register_request = payload or WarpRegisterRequest()
     try:
-        instance = await warp_manager.register_new_instance()
+        instance = await warp_manager.register_new_instance(
+            register_proxy_mode=register_request.register_proxy_mode,
+            register_proxy_url=register_request.register_proxy_url,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except RuntimeError as e:
