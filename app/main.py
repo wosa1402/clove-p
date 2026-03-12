@@ -70,6 +70,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Health check
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    stats = await account_manager.get_status()
+    return {"status": "healthy" if stats["valid_accounts"] > 0 else "degraded"}
+
 # Include routers
 app.include_router(api_router)
 
@@ -78,14 +85,6 @@ register_static_routes(app)
 
 # Exception handlers
 app.add_exception_handler(AppError, app_exception_handler)
-
-
-# Health check
-@app.get("/health")
-async def health():
-    """Health check endpoint."""
-    stats = await account_manager.get_status()
-    return {"status": "healthy" if stats["valid_accounts"] > 0 else "degraded"}
 
 
 def main():
