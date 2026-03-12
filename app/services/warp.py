@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import platform
 import shutil
 import signal
 import threading
@@ -208,8 +209,23 @@ class WarpManager:
 
         data_path = Path(settings.data_folder) / "warp"
         bundled_path = Path(__file__).resolve().parents[2] / "warp"
+        arch_map = {
+            "x86_64": "amd64",
+            "amd64": "amd64",
+            "aarch64": "arm64",
+            "arm64": "arm64",
+        }
+        machine = platform.machine().lower()
+        arch_specific_path = None
+        if machine in arch_map:
+            arch_specific_path = (
+                Path(__file__).resolve().parents[2]
+                / f"warp-linux-{arch_map[machine]}"
+            )
 
-        for candidate in (data_path, bundled_path):
+        for candidate in (data_path, bundled_path, arch_specific_path):
+            if candidate is None:
+                continue
             resolved = self._ensure_executable(candidate)
             if resolved:
                 return resolved
@@ -220,7 +236,8 @@ class WarpManager:
 
         raise FileNotFoundError(
             "WARP binary not found. Set WARP_BINARY_PATH, "
-            "place binary in data_folder/warp or project_root/warp, "
+            "place binary in data_folder/warp, project_root/warp, "
+            "or project_root/warp-linux-<arch>, "
             "or ensure 'warp' is in PATH."
         )
 
@@ -270,10 +287,18 @@ class WarpManager:
         ]
         logger.info(f"Starting WARP process: {' '.join(cmd)}")
 
+        env = os.environ.copy()
+        register_proxy_url = settings.warp_register_proxy_url
+        if register_proxy_url:
+            env["WARP_REGISTER_PROXY_URL"] = register_proxy_url
+        else:
+            env.pop("WARP_REGISTER_PROXY_URL", None)
+
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         self._processes[instance.instance_id] = process
         instance.status = WarpInstanceStatus.STARTING

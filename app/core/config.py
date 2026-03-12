@@ -118,6 +118,11 @@ class Settings(BaseSettings):
         env="WARP_BINARY_PATH",
         description="Path to the cloudflare-warp binary. If not set, looks in data_folder/warp, project_root/warp, or system PATH.",
     )
+    warp_register_proxy_url: Optional[str] = Field(
+        default=None,
+        env="WARP_REGISTER_PROXY_URL",
+        description="Optional upstream proxy used only when registering or updating WARP identities against Cloudflare API.",
+    )
     warp_base_port: int = Field(
         default=10000,
         env="WARP_BASE_PORT",

@@ -5,8 +5,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        WARP_BINARY_URL: ${WARP_BINARY_URL:-}
     container_name: clove
     restart: unless-stopped
     ports:

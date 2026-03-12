@@ -34,6 +34,7 @@ class SettingsRead(BaseModel):
     oauth_redirect_uri: str
 
     warp_binary_path: str | None
+    warp_register_proxy_url: str | None
     warp_base_port: int
     warp_max_register_retries: int
     warp_ip_check_url: str
@@ -67,6 +68,7 @@ class SettingsUpdate(BaseModel):
     oauth_redirect_uri: str | None = None
 
     warp_binary_path: str | None = None
+    warp_register_proxy_url: str | None = None
     warp_base_port: int | None = None
     warp_max_register_retries: int | None = None
     warp_ip_check_url: str | None = None

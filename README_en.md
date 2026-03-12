@@ -63,22 +63,19 @@ ghcr.io/wosa1402/clove-p:main
 ghcr.io/wosa1402/clove-p:latest
 ```
 
-During the workflow build, the bundled `warp` binary from the repository root is baked into the image, so WARP IP management works inside the container without an extra install step.
+During the workflow build, the image automatically picks `warp-linux-amd64` or `warp-linux-arm64` from the repository root, so WARP IP management works inside the container without an extra install step.
 
 ### Build locally
 
-If your local branch does not include the `warp` file yet, pass `WARP_BINARY_URL` explicitly at build time:
+The repository already includes `warp-linux-amd64` and `warp-linux-arm64`, so local builds automatically pick the correct binary for the target image architecture:
 
 ```bash
-docker build \
-  --build-arg WARP_BINARY_URL=https://raw.githubusercontent.com/wosa1402/clove-p/main/warp \
-  -t clove:local .
+docker build -t clove:local .
 ```
 
-The provided `docker-compose.yml` also accepts the same build argument:
+The provided `docker-compose.yml` works out of the box as well:
 
 ```bash
-export WARP_BINARY_URL=https://raw.githubusercontent.com/wosa1402/clove-p/main/warp
 docker compose up -d --build
 ```
 
@@ -187,6 +184,9 @@ ADMIN_API_KEYS=your-secret-key
 
 # Claude.ai Cookie
 COOKIES=sessionKey=your-session-key
+
+# Upstream proxy used only when registering/updating WARP identities
+WARP_REGISTER_PROXY_URL=socks5://user:pass@host:port
 ```
 
 See `.env.example` for more configuration options.

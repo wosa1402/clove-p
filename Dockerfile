@@ -27,7 +27,7 @@ RUN pnpm run build
 # =============================================================================
 FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS app
 
-ARG WARP_BINARY_URL=""
+ARG TARGETARCH
 
 # uv optimization environment variables
 ENV UV_COMPILE_BYTECODE=1 \
@@ -50,6 +50,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Step 2: Copy application code and README.md (required by pyproject.toml)
 COPY app/ ./app/
 COPY README.md ./
+COPY warp-linux-amd64 warp-linux-arm64 ./
 
 # Step 3: Copy frontend build artifacts (required by pyproject.toml force-include)
 COPY --from=frontend-builder /app/front/dist ./app/static
@@ -58,14 +59,9 @@ COPY --from=frontend-builder /app/front/dist ./app/static
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --extra rnet --extra curl
 
-# Step 5: Optionally bake the bundled WARP binary into the image.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && if [ -n "$WARP_BINARY_URL" ]; then \
-        curl -fsSL "$WARP_BINARY_URL" -o /app/warp && chmod 0755 /app/warp; \
-    fi \
-    && apt-get purge -y --auto-remove curl \
-    && rm -rf /var/lib/apt/lists/*
+# Step 5: Select the bundled WARP binary that matches the target image architecture.
+RUN cp "/app/warp-linux-${TARGETARCH}" /app/warp \
+    && chmod 0755 /app/warp
 
 # Create data directory
 RUN mkdir -p /data
