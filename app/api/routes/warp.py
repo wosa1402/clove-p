@@ -12,6 +12,8 @@ class WarpInstanceResponse(BaseModel):
     instance_id: str
     port: int
     proxy_url: str
+    endpoint_mode: Literal["auto", "scan", "custom"]
+    custom_endpoints: List[str]
     public_ip: Optional[str]
     public_ipv4: Optional[str]
     public_ipv6: Optional[str]
@@ -30,6 +32,8 @@ class WarpBindResponse(BaseModel):
 class WarpRegisterRequest(BaseModel):
     register_proxy_mode: Literal["default", "direct", "custom"] = "default"
     register_proxy_url: Optional[str] = None
+    endpoint_mode: Literal["default", "auto", "scan", "custom"] = "default"
+    custom_endpoints: Optional[List[str]] = None
 
 
 def _instance_to_response(inst) -> WarpInstanceResponse:
@@ -37,6 +41,8 @@ def _instance_to_response(inst) -> WarpInstanceResponse:
         instance_id=inst.instance_id,
         port=inst.port,
         proxy_url=inst.proxy_url,
+        endpoint_mode=inst.endpoint_mode,
+        custom_endpoints=inst.custom_endpoints,
         public_ip=inst.public_ip,
         public_ipv4=inst.public_ipv4,
         public_ipv6=inst.public_ipv6,
@@ -67,6 +73,8 @@ async def register_warp_instance(
         instance = await warp_manager.register_new_instance(
             register_proxy_mode=register_request.register_proxy_mode,
             register_proxy_url=register_request.register_proxy_url,
+            endpoint_mode=register_request.endpoint_mode,
+            custom_endpoints=register_request.custom_endpoints,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -106,6 +114,20 @@ async def stop_warp_instance(instance_id: str, _: AdminAuthDep):
         instance = await warp_manager.stop_instance(instance_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    return _instance_to_response(instance)
+
+
+@router.post("/{instance_id}/restart", response_model=WarpInstanceResponse)
+async def restart_warp_instance(instance_id: str, _: AdminAuthDep):
+    """Restart a WARP instance and refresh its detected egress IPs."""
+    try:
+        instance = await warp_manager.restart_instance(instance_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     return _instance_to_response(instance)
 
 

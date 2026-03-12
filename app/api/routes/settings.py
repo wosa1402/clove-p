@@ -1,6 +1,6 @@
 import os
 import json
-from typing import List
+from typing import List, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, HttpUrl
 
@@ -35,6 +35,9 @@ class SettingsRead(BaseModel):
 
     warp_binary_path: str | None
     warp_register_proxy_url: str | None
+    warp_endpoint_mode: Literal["auto", "scan", "custom"]
+    warp_custom_endpoints: List[str]
+    warp_scan_rtt_ms: int
     warp_base_port: int
     warp_max_register_retries: int
     warp_ip_check_url: str
@@ -69,6 +72,9 @@ class SettingsUpdate(BaseModel):
 
     warp_binary_path: str | None = None
     warp_register_proxy_url: str | None = None
+    warp_endpoint_mode: Literal["auto", "scan", "custom"] | None = None
+    warp_custom_endpoints: List[str] | None = None
+    warp_scan_rtt_ms: int | None = None
     warp_base_port: int | None = None
     warp_max_register_retries: int | None = None
     warp_ip_check_url: str | None = None

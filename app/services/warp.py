@@ -83,6 +83,8 @@ class WarpManager:
         self,
         register_proxy_mode: Literal["default", "direct", "custom"] = "default",
         register_proxy_url: Optional[str] = None,
+        endpoint_mode: Literal["default", "auto", "scan", "custom"] = "default",
+        custom_endpoints: Optional[List[str]] = None,
     ) -> WarpInstance:
         """
         Register a new WARP identity, start the tunnel, detect IP.
@@ -93,6 +95,9 @@ class WarpManager:
             resolved_register_proxy_url = self._resolve_register_proxy_url(
                 register_proxy_mode, register_proxy_url
             )
+            resolved_endpoint_mode, resolved_custom_endpoints = (
+                self._resolve_endpoint_config(endpoint_mode, custom_endpoints)
+            )
             existing_ips = {
                 inst.public_ip
                 for inst in self._instances.values()
@@ -101,7 +106,10 @@ class WarpManager:
 
             for attempt in range(1, max_retries + 1):
                 logger.info(f"WARP registration attempt {attempt}/{max_retries}")
-                instance = self._create_instance_metadata()
+                instance = self._create_instance_metadata(
+                    endpoint_mode=resolved_endpoint_mode,
+                    custom_endpoints=resolved_custom_endpoints,
+                )
 
                 try:
                     await self._start_process(
@@ -181,6 +189,31 @@ class WarpManager:
         self._save_instances()
         return instance
 
+    async def restart_instance(self, instance_id: str) -> WarpInstance:
+        """Restart an existing WARP instance using the same identity data."""
+        instance = self._instances.get(instance_id)
+        if not instance:
+            raise ValueError(f"Instance {instance_id} not found")
+        if instance.status == WarpInstanceStatus.STARTING:
+            raise RuntimeError("WARP instance is still starting")
+
+        await self._stop_process(instance_id)
+
+        try:
+            await self._start_process(instance)
+            await self._wait_for_ready(instance)
+            await self._refresh_public_ips(instance)
+            instance.status = WarpInstanceStatus.RUNNING
+            instance.error_message = None
+        except Exception as e:
+            instance.status = WarpInstanceStatus.ERROR
+            instance.error_message = str(e)
+            self._save_instances()
+            raise
+
+        self._save_instances()
+        return instance
+
     def get_instance(self, instance_id: str) -> Optional[WarpInstance]:
         return self._instances.get(instance_id)
 
@@ -215,6 +248,38 @@ class WarpManager:
             return proxy_candidate
 
         raise ValueError("不支持的 WARP 申请代理模式")
+
+    def _resolve_endpoint_config(
+        self,
+        endpoint_mode: Literal["default", "auto", "scan", "custom"] = "default",
+        custom_endpoints: Optional[List[str]] = None,
+    ) -> tuple[Literal["auto", "scan", "custom"], List[str]]:
+        """Resolve the endpoint strategy for this WARP instance."""
+        normalized_mode = (endpoint_mode or "default").strip().lower()
+
+        if normalized_mode == "default":
+            resolved_mode = settings.warp_endpoint_mode
+            resolved_custom_endpoints = list(settings.warp_custom_endpoints)
+        elif normalized_mode == "auto":
+            resolved_mode = "auto"
+            resolved_custom_endpoints = []
+        elif normalized_mode == "scan":
+            resolved_mode = "scan"
+            resolved_custom_endpoints = []
+        elif normalized_mode == "custom":
+            resolved_mode = "custom"
+            resolved_custom_endpoints = [
+                endpoint.strip()
+                for endpoint in (custom_endpoints or [])
+                if endpoint and endpoint.strip()
+            ]
+        else:
+            raise ValueError("不支持的 WARP endpoint 模式")
+
+        if resolved_mode == "custom" and not resolved_custom_endpoints:
+            raise ValueError("自定义 endpoint 模式需要至少提供一个 endpoint")
+
+        return resolved_mode, resolved_custom_endpoints
 
     # --- Internal helpers ---
 
@@ -290,7 +355,11 @@ class WarpManager:
             port += 1
         return port
 
-    def _create_instance_metadata(self) -> WarpInstance:
+    def _create_instance_metadata(
+        self,
+        endpoint_mode: Literal["auto", "scan", "custom"] = "auto",
+        custom_endpoints: Optional[List[str]] = None,
+    ) -> WarpInstance:
         """Create a new WarpInstance with allocated port and data dir."""
         existing_nums = []
         for iid in self._instances.keys():
@@ -309,9 +378,27 @@ class WarpManager:
             instance_id=instance_id,
             port=port,
             data_dir=data_dir,
+            endpoint_mode=endpoint_mode,
+            custom_endpoints=list(custom_endpoints or []),
             status=WarpInstanceStatus.STARTING,
             created_at=datetime.now().isoformat(),
         )
+
+    def _build_endpoint_args(self, instance: WarpInstance) -> List[str]:
+        """Translate the instance endpoint strategy into CLI flags."""
+        if instance.endpoint_mode == "auto":
+            return []
+
+        if instance.endpoint_mode == "scan":
+            return ["--scan", "--scan-rtt", f"{settings.warp_scan_rtt_ms}ms"]
+
+        if instance.endpoint_mode == "custom":
+            args: List[str] = []
+            for endpoint in instance.custom_endpoints:
+                args.extend(["--endpoint", endpoint])
+            return args
+
+        raise ValueError("不支持的 WARP endpoint 模式")
 
     async def _start_process(
         self,
@@ -327,6 +414,7 @@ class WarpManager:
             "--data-dir", instance.data_dir,
             "--socks-addr", f"0.0.0.0:{instance.port}",
         ]
+        cmd.extend(self._build_endpoint_args(instance))
         logger.info(f"Starting WARP process: {' '.join(cmd)}")
 
         env = os.environ.copy()

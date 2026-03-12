@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, List, Literal
 from enum import Enum
 
 
@@ -17,6 +17,8 @@ class WarpInstance:
     instance_id: str
     port: int
     data_dir: str
+    endpoint_mode: Literal["auto", "scan", "custom"] = "auto"
+    custom_endpoints: List[str] = field(default_factory=list)
     public_ipv4: Optional[str] = None
     public_ipv6: Optional[str] = None
     status: WarpInstanceStatus = WarpInstanceStatus.STOPPED
@@ -39,6 +41,8 @@ class WarpInstance:
             "instance_id": self.instance_id,
             "port": self.port,
             "data_dir": self.data_dir,
+            "endpoint_mode": self.endpoint_mode,
+            "custom_endpoints": self.custom_endpoints,
             "public_ip": self.public_ip,
             "public_ipv4": self.public_ipv4,
             "public_ipv6": self.public_ipv6,
@@ -63,6 +67,8 @@ class WarpInstance:
             instance_id=data["instance_id"],
             port=data["port"],
             data_dir=data["data_dir"],
+            endpoint_mode=data.get("endpoint_mode", "auto"),
+            custom_endpoints=data.get("custom_endpoints", []) or [],
             public_ipv4=public_ipv4,
             public_ipv6=public_ipv6,
             status=WarpInstanceStatus(data.get("status", "stopped")),

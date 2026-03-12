@@ -1,7 +1,7 @@
 import os
 import json
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, HttpUrl, field_validator
 from dotenv import load_dotenv
@@ -122,6 +122,21 @@ class Settings(BaseSettings):
         default=None,
         env="WARP_REGISTER_PROXY_URL",
         description="Optional upstream proxy used only when registering or updating WARP identities against Cloudflare API.",
+    )
+    warp_endpoint_mode: Literal["auto", "scan", "custom"] = Field(
+        default="auto",
+        env="WARP_ENDPOINT_MODE",
+        description="Default endpoint selection strategy for WARP instances: auto, scan, or custom.",
+    )
+    warp_custom_endpoints: List[str] | str = Field(
+        default_factory=list,
+        env="WARP_CUSTOM_ENDPOINTS",
+        description="Comma or newline separated WARP endpoints used when warp_endpoint_mode is set to custom.",
+    )
+    warp_scan_rtt_ms: int = Field(
+        default=1000,
+        env="WARP_SCAN_RTT_MS",
+        description="Maximum RTT in milliseconds used when scanning for the best WARP endpoints.",
     )
     warp_base_port: int = Field(
         default=10000,
@@ -297,12 +312,21 @@ class Settings(BaseSettings):
     )
 
     @field_validator(
-        "api_keys", "admin_api_keys", "cookies", "max_models", "pad_tokens"
+        "api_keys",
+        "admin_api_keys",
+        "cookies",
+        "max_models",
+        "pad_tokens",
+        "warp_custom_endpoints",
     )
     def parse_comma_separated(cls, v: str | List[str]) -> List[str]:
         """Parse comma-separated string."""
         if isinstance(v, str):
-            return [key.strip() for key in v.split(",") if key.strip()]
+            normalized = v.replace("\r\n", "\n").replace("\r", "\n")
+            parts = []
+            for line in normalized.split("\n"):
+                parts.extend(line.split(","))
+            return [key.strip() for key in parts if key.strip()]
         return v
 
 
