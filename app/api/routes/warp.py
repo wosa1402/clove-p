@@ -80,7 +80,7 @@ async def register_warp_instance(
     _: AdminAuthDep,
     payload: WarpRegisterRequest | None = None,
 ):
-    """Register a new WARP instance with a unique public IP."""
+    """Register a new WARP instance with a unique IPv4/IPv6 egress combination."""
     register_request = payload or WarpRegisterRequest()
     try:
         instance = await warp_manager.register_new_instance(

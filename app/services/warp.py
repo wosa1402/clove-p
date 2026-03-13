@@ -110,7 +110,7 @@ class WarpManager:
     ) -> WarpInstance:
         """
         Register a new WARP identity, start the tunnel, detect IP.
-        Retries up to max_retries if IP is a duplicate.
+        Retries up to max_retries if both IPv4 and IPv6 match an existing instance.
         """
         async with self._register_lock:
             max_retries = settings.warp_max_register_retries
@@ -120,10 +120,10 @@ class WarpManager:
             resolved_endpoint_mode, resolved_custom_endpoints = (
                 self._resolve_endpoint_config(endpoint_mode, custom_endpoints)
             )
-            existing_ips = {
-                inst.public_ip
+            existing_ip_pairs = {
+                (inst.public_ipv4, inst.public_ipv6)
                 for inst in self._instances.values()
-                if inst.public_ip
+                if inst.public_ipv4 or inst.public_ipv6
             }
 
             for attempt in range(1, max_retries + 1):
@@ -146,11 +146,13 @@ class WarpManager:
                     await self._wait_for_ready(instance)
                     await self._start_family_proxy_processes(instance)
                     await self._refresh_public_ips(instance)
-                    public_ip = instance.public_ip
+                    public_ip_pair = (instance.public_ipv4, instance.public_ipv6)
 
-                    if public_ip in existing_ips:
+                    if public_ip_pair in existing_ip_pairs:
                         logger.warning(
-                            f"Duplicate IP {public_ip} on attempt {attempt}, retrying"
+                            "Duplicate WARP egress pair on attempt "
+                            f"{attempt}, retrying: IPv4={instance.public_ipv4 or '-'} "
+                            f"IPv6={instance.public_ipv6 or '-'}"
                         )
                         await self._teardown_instance(instance)
                         continue
@@ -171,7 +173,7 @@ class WarpManager:
                     await self._teardown_instance(instance)
                     if attempt == max_retries:
                         raise RuntimeError(
-                            f"Failed to register WARP instance with unique IP "
+                            f"Failed to register WARP instance with unique IPv4/IPv6 pair "
                             f"after {max_retries} attempts: {e}"
                         )
 

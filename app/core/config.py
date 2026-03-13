@@ -146,7 +146,7 @@ class Settings(BaseSettings):
     warp_max_register_retries: int = Field(
         default=5,
         env="WARP_MAX_REGISTER_RETRIES",
-        description="Maximum retries when registering a new WARP instance to get a unique IP.",
+        description="Maximum retries when registering a new WARP instance to get a unique IPv4/IPv6 combination.",
     )
     warp_ip_check_url: str = Field(
         default="https://api.ipify.org",
