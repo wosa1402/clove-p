@@ -79,6 +79,15 @@ class AccountEgressTestResponse(BaseModel):
     primary_ip: Optional[str] = None
 
 
+def _normalize_optional_uuid(value: Optional[UUID | str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized or normalized.lower() in {"none", "null"}:
+        return None
+    return normalized
+
+
 def _resolve_account_egress_ip(account: Account) -> Optional[str]:
     if not account.warp_instance_id:
         if account.proxy_ip_family == "ipv4":
@@ -173,7 +182,7 @@ async def create_account(account_data: AccountCreate, _: AdminAuthDep):
     account = await account_manager.add_account(
         cookie_value=account_data.cookie_value,
         oauth_token=oauth_token,
-        organization_uuid=str(account_data.organization_uuid),
+        organization_uuid=_normalize_optional_uuid(account_data.organization_uuid),
         capabilities=account_data.capabilities,
     )
 
