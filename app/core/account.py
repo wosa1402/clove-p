@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 from enum import Enum
 from datetime import datetime
 from dataclasses import dataclass
@@ -69,6 +69,8 @@ class Account:
         self.resets_at: Optional[datetime] = None
         self.oauth_token: Optional[OAuthToken] = oauth_token
         self.proxy_url: Optional[str] = None
+        self.warp_instance_id: Optional[str] = None
+        self.proxy_ip_family: Optional[Literal["auto", "ipv4", "ipv6"]] = None
 
     def __enter__(self) -> "Account":
         """Enter the context manager."""
@@ -124,6 +126,8 @@ class Account:
             "resets_at": self.resets_at.isoformat() if self.resets_at else None,
             "oauth_token": self.oauth_token.to_dict() if self.oauth_token else None,
             "proxy_url": self.proxy_url,
+            "warp_instance_id": self.warp_instance_id,
+            "proxy_ip_family": self.proxy_ip_family,
         }
 
     @classmethod
@@ -145,6 +149,8 @@ class Account:
             account.oauth_token = OAuthToken.from_dict(data["oauth_token"])
 
         account.proxy_url = data.get("proxy_url")
+        account.warp_instance_id = data.get("warp_instance_id")
+        account.proxy_ip_family = data.get("proxy_ip_family")
 
         return account
 

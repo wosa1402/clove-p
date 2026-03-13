@@ -2,6 +2,9 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Literal
 from enum import Enum
 
+IPV4_PROXY_PORT_OFFSET = 10000
+IPV6_PROXY_PORT_OFFSET = 20000
+
 
 class WarpInstanceStatus(str, Enum):
     STARTING = "starting"
@@ -32,6 +35,26 @@ class WarpInstance:
         return f"socks5://127.0.0.1:{self.port}"
 
     @property
+    def ipv4_proxy_port(self) -> int:
+        """Return the IPv4-only wrapper proxy port for this instance."""
+        return self.port + IPV4_PROXY_PORT_OFFSET
+
+    @property
+    def ipv6_proxy_port(self) -> int:
+        """Return the IPv6-only wrapper proxy port for this instance."""
+        return self.port + IPV6_PROXY_PORT_OFFSET
+
+    @property
+    def ipv4_proxy_url(self) -> str:
+        """Return the IPv4-only SOCKS5 proxy URL for this instance."""
+        return f"socks5://127.0.0.1:{self.ipv4_proxy_port}"
+
+    @property
+    def ipv6_proxy_url(self) -> str:
+        """Return the IPv6-only SOCKS5 proxy URL for this instance."""
+        return f"socks5://127.0.0.1:{self.ipv6_proxy_port}"
+
+    @property
     def public_ip(self) -> Optional[str]:
         """Return the primary public IP for backward compatibility."""
         return self.public_ipv4 or self.public_ipv6
@@ -40,6 +63,10 @@ class WarpInstance:
         return {
             "instance_id": self.instance_id,
             "port": self.port,
+            "ipv4_proxy_port": self.ipv4_proxy_port,
+            "ipv6_proxy_port": self.ipv6_proxy_port,
+            "ipv4_proxy_url": self.ipv4_proxy_url,
+            "ipv6_proxy_url": self.ipv6_proxy_url,
             "data_dir": self.data_dir,
             "endpoint_mode": self.endpoint_mode,
             "custom_endpoints": self.custom_endpoints,

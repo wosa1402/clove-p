@@ -4,6 +4,7 @@ import os
 import platform
 import shutil
 import signal
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,10 @@ from loguru import logger
 from app.core.config import settings
 from app.core.http_client import create_session
 from app.core.warp_instance import WarpInstance, WarpInstanceStatus
+
+DIRECT_AUTO_PROXY_PORT = 19080
+DIRECT_IPV4_PROXY_PORT = 19081
+DIRECT_IPV6_PROXY_PORT = 19082
 
 
 class WarpManager:
@@ -35,6 +40,17 @@ class WarpManager:
         self._initialized = True
         self._instances: Dict[str, WarpInstance] = {}
         self._processes: Dict[str, asyncio.subprocess.Process] = {}
+        self._family_proxy_processes: Dict[
+            str, Dict[Literal["ipv4", "ipv6"], asyncio.subprocess.Process]
+        ] = {}
+        self._direct_proxy_processes: Dict[
+            Literal["auto", "ipv4", "ipv6"], asyncio.subprocess.Process
+        ] = {}
+        self._direct_public_ips: Dict[Literal["auto", "ipv4", "ipv6"], Optional[str]] = {
+            "auto": None,
+            "ipv4": None,
+            "ipv6": None,
+        }
         self._monitor_task: Optional[asyncio.Task] = None
         self._register_lock = asyncio.Lock()
 
@@ -42,6 +58,8 @@ class WarpManager:
 
     async def start(self) -> None:
         """Load persisted instances and restart running ones."""
+        await self._start_direct_proxy_processes()
+        await self._refresh_direct_public_ips()
         self._load_instances()
         for instance in self._instances.values():
             if instance.status in (
@@ -51,6 +69,7 @@ class WarpManager:
                 try:
                     await self._start_process(instance)
                     await self._wait_for_ready(instance)
+                    await self._start_family_proxy_processes(instance)
                     await self._refresh_public_ips(instance)
                     instance.status = WarpInstanceStatus.RUNNING
                     instance.error_message = None
@@ -74,6 +93,9 @@ class WarpManager:
                 pass
         for instance_id in list(self._processes.keys()):
             await self._stop_process(instance_id)
+        for instance_id in list(self._family_proxy_processes.keys()):
+            await self._stop_family_proxy_processes(instance_id)
+        await self._stop_direct_proxy_processes()
         self._save_instances()
         logger.info("WarpManager stopped")
 
@@ -122,6 +144,7 @@ class WarpManager:
                         register_proxy_url=resolved_register_proxy_url,
                     )
                     await self._wait_for_ready(instance)
+                    await self._start_family_proxy_processes(instance)
                     await self._refresh_public_ips(instance)
                     public_ip = instance.public_ip
 
@@ -172,6 +195,7 @@ class WarpManager:
             raise ValueError(f"Instance {instance_id} not found")
         await self._start_process(instance)
         await self._wait_for_ready(instance)
+        await self._start_family_proxy_processes(instance)
         await self._refresh_public_ips(instance)
         instance.status = WarpInstanceStatus.RUNNING
         instance.last_started_at = datetime.now().isoformat()
@@ -184,6 +208,7 @@ class WarpManager:
         instance = self._instances.get(instance_id)
         if not instance:
             raise ValueError(f"Instance {instance_id} not found")
+        await self._stop_family_proxy_processes(instance_id)
         await self._stop_process(instance_id)
         instance.status = WarpInstanceStatus.STOPPED
         self._save_instances()
@@ -197,11 +222,13 @@ class WarpManager:
         if instance.status == WarpInstanceStatus.STARTING:
             raise RuntimeError("WARP instance is still starting")
 
+        await self._stop_family_proxy_processes(instance_id)
         await self._stop_process(instance_id)
 
         try:
             await self._start_process(instance)
             await self._wait_for_ready(instance)
+            await self._start_family_proxy_processes(instance)
             await self._refresh_public_ips(instance)
             instance.status = WarpInstanceStatus.RUNNING
             instance.error_message = None
@@ -220,12 +247,42 @@ class WarpManager:
     def get_all_instances(self) -> List[WarpInstance]:
         return list(self._instances.values())
 
-    def get_proxy_url(self, instance_id: str) -> Optional[str]:
-        """Get the SOCKS5 proxy URL for a running instance."""
+    def get_proxy_url(
+        self,
+        instance_id: str,
+        ip_family: Literal["auto", "ipv4", "ipv6"] = "auto",
+    ) -> Optional[str]:
+        """Get the effective SOCKS5 proxy URL for a running instance."""
         instance = self._instances.get(instance_id)
-        if instance and instance.status == WarpInstanceStatus.RUNNING:
+        if not instance or instance.status != WarpInstanceStatus.RUNNING:
+            return None
+
+        if ip_family == "auto":
             return instance.proxy_url
+        if ip_family == "ipv4":
+            return instance.ipv4_proxy_url
+        if ip_family == "ipv6":
+            return instance.ipv6_proxy_url
         return None
+
+    def get_direct_proxy_url(
+        self,
+        ip_family: Literal["auto", "ipv4", "ipv6"] = "auto",
+    ) -> str:
+        """Get the local host direct family proxy URL."""
+        port_map = {
+            "auto": DIRECT_AUTO_PROXY_PORT,
+            "ipv4": DIRECT_IPV4_PROXY_PORT,
+            "ipv6": DIRECT_IPV6_PROXY_PORT,
+        }
+        return f"socks5://127.0.0.1:{port_map[ip_family]}"
+
+    def get_direct_public_ip(
+        self,
+        ip_family: Literal["auto", "ipv4", "ipv6"] = "auto",
+    ) -> Optional[str]:
+        """Get the cached direct host egress IP for a given family."""
+        return self._direct_public_ips.get(ip_family)
 
     def _resolve_register_proxy_url(
         self,
@@ -452,8 +509,166 @@ class WarpManager:
                 await process.wait()
             logger.info(f"Stopped WARP process for {instance_id}")
 
+    def _get_family_proxy_script(self) -> str:
+        script_path = Path(__file__).resolve().parents[1] / "tools" / "warp_family_proxy.py"
+        return str(script_path)
+
+    async def _start_family_proxy_processes(self, instance: WarpInstance) -> None:
+        """Start IPv4/IPv6 family wrapper proxies for a WARP instance."""
+        await self._stop_family_proxy_processes(instance.instance_id)
+
+        script_path = self._get_family_proxy_script()
+        processes: Dict[Literal["ipv4", "ipv6"], asyncio.subprocess.Process] = {}
+
+        for family, port in (
+            ("ipv4", instance.ipv4_proxy_port),
+            ("ipv6", instance.ipv6_proxy_port),
+        ):
+            cmd = [
+                sys.executable,
+                script_path,
+                "--listen-host",
+                "127.0.0.1",
+                "--listen-port",
+                str(port),
+                "--upstream-host",
+                "127.0.0.1",
+                "--upstream-port",
+                str(instance.port),
+                "--family",
+                family,
+            ]
+            logger.info(
+                f"Starting WARP family proxy for {instance.instance_id} ({family}): {' '.join(cmd)}"
+            )
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            processes[family] = process
+            asyncio.create_task(
+                self._log_process_output(f"{instance.instance_id}:{family}", process)
+            )
+
+        self._family_proxy_processes[instance.instance_id] = processes
+
+        for family, port in (
+            ("ipv4", instance.ipv4_proxy_port),
+            ("ipv6", instance.ipv6_proxy_port),
+        ):
+            await self._wait_for_port(
+                "127.0.0.1",
+                port,
+                timeout=5,
+                label=f"{instance.instance_id} {family} family proxy",
+            )
+
+    async def _stop_family_proxy_processes(self, instance_id: str) -> None:
+        """Stop IPv4/IPv6 family wrapper proxies for a WARP instance."""
+        processes = self._family_proxy_processes.pop(instance_id, {})
+        for family, process in processes.items():
+            if process.returncode is None:
+                process.send_signal(signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                logger.info(
+                    f"Stopped WARP family proxy for {instance_id} ({family})"
+                )
+
+    async def _start_direct_proxy_processes(self) -> None:
+        """Start host direct auto/IPv4/IPv6 wrapper proxies."""
+        await self._stop_direct_proxy_processes()
+
+        script_path = self._get_family_proxy_script()
+        process_specs = (
+            ("auto", DIRECT_AUTO_PROXY_PORT),
+            ("ipv4", DIRECT_IPV4_PROXY_PORT),
+            ("ipv6", DIRECT_IPV6_PROXY_PORT),
+        )
+
+        for family, port in process_specs:
+            cmd = [
+                sys.executable,
+                script_path,
+                "--mode",
+                "direct",
+                "--listen-host",
+                "127.0.0.1",
+                "--listen-port",
+                str(port),
+                "--family",
+                family,
+            ]
+            logger.info(f"Starting direct family proxy ({family}): {' '.join(cmd)}")
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            self._direct_proxy_processes[family] = process
+            asyncio.create_task(self._log_process_output(f"direct:{family}", process))
+
+        for family, port in process_specs:
+            await self._wait_for_port(
+                "127.0.0.1",
+                port,
+                timeout=5,
+                label=f"direct {family} family proxy",
+            )
+
+    async def _stop_direct_proxy_processes(self) -> None:
+        """Stop host direct auto/IPv4/IPv6 wrapper proxies."""
+        processes = self._direct_proxy_processes
+        self._direct_proxy_processes = {}
+        for family, process in processes.items():
+            if process.returncode is None:
+                process.send_signal(signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                logger.info(f"Stopped direct family proxy ({family})")
+
+    async def _refresh_direct_public_ips(self) -> None:
+        """Refresh host direct auto/IPv4/IPv6 egress IPs through local wrappers."""
+        direct_auto = self.get_direct_proxy_url("auto")
+        direct_ipv4 = self.get_direct_proxy_url("ipv4")
+        direct_ipv6 = self.get_direct_proxy_url("ipv6")
+
+        try:
+            self._direct_public_ips["ipv4"] = await self._probe_proxy_url(
+                direct_ipv4,
+                settings.warp_ip_check_url,
+            )
+        except Exception as e:
+            self._direct_public_ips["ipv4"] = None
+            logger.warning(f"Failed to detect direct IPv4 egress IP: {e}")
+
+        try:
+            self._direct_public_ips["ipv6"] = await self._probe_proxy_url(
+                direct_ipv6,
+                settings.warp_ip_check_url_v6,
+            )
+        except Exception as e:
+            self._direct_public_ips["ipv6"] = None
+            logger.warning(f"Failed to detect direct IPv6 egress IP: {e}")
+
+        try:
+            self._direct_public_ips["auto"] = await self._probe_proxy_url(
+                direct_auto,
+                settings.warp_ip_check_url,
+            )
+        except Exception:
+            self._direct_public_ips["auto"] = self._direct_public_ips["ipv4"] or self._direct_public_ips["ipv6"]
+
     async def _teardown_instance(self, instance: WarpInstance) -> None:
         """Stop process and delete data directory."""
+        await self._stop_family_proxy_processes(instance.instance_id)
         await self._stop_process(instance.instance_id)
         if os.path.exists(instance.data_dir):
             shutil.rmtree(instance.data_dir, ignore_errors=True)
@@ -462,30 +677,46 @@ class WarpManager:
     async def _wait_for_ready(self, instance: WarpInstance) -> None:
         """Poll the SOCKS5 port until it accepts connections."""
         timeout = settings.warp_startup_timeout
-        start = asyncio.get_event_loop().time()
-        while (asyncio.get_event_loop().time() - start) < timeout:
-            try:
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection("127.0.0.1", instance.port),
-                    timeout=2,
-                )
-                writer.close()
-                await writer.wait_closed()
-                logger.info(
-                    f"WARP instance {instance.instance_id} ready on port {instance.port}"
-                )
-                return
-            except (ConnectionRefusedError, asyncio.TimeoutError, OSError):
-                await asyncio.sleep(1)
+        await self._wait_for_port(
+            "127.0.0.1",
+            instance.port,
+            timeout=timeout,
+            label=f"WARP instance {instance.instance_id}",
+        )
+        logger.info(
+            f"WARP instance {instance.instance_id} ready on port {instance.port}"
+        )
 
         proc = self._processes.get(instance.instance_id)
         if proc and proc.returncode is not None:
             raise RuntimeError(
                 f"WARP process exited with code {proc.returncode}"
             )
+
+    async def _wait_for_port(
+        self,
+        host: str,
+        port: int,
+        *,
+        timeout: int,
+        label: str,
+    ) -> None:
+        """Poll a TCP port until it accepts connections."""
+        start = asyncio.get_event_loop().time()
+        while (asyncio.get_event_loop().time() - start) < timeout:
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port),
+                    timeout=2,
+                )
+                writer.close()
+                await writer.wait_closed()
+                return
+            except (ConnectionRefusedError, asyncio.TimeoutError, OSError):
+                await asyncio.sleep(1)
+
         raise TimeoutError(
-            f"WARP instance {instance.instance_id} did not become "
-            f"ready within {timeout}s"
+            f"{label} did not become ready within {timeout}s"
         )
 
     async def _refresh_public_ips(self, instance: WarpInstance) -> None:
@@ -527,22 +758,26 @@ class WarpManager:
         self, instance: WarpInstance, check_url: str, ip_family: str
     ) -> str:
         """Detect a public egress IP through the WARP SOCKS5 proxy."""
-        async with create_session(timeout=15, proxy=instance.proxy_url) as session:
+        ip = await self._probe_proxy_url(instance.proxy_url, check_url)
+        logger.info(
+            f"Detected {ip_family} for {instance.instance_id}: {ip}"
+        )
+        return ip
+
+    async def _probe_proxy_url(self, proxy_url: str, check_url: str) -> str:
+        """Probe a public IP through the specified SOCKS5 proxy URL."""
+        async with create_session(timeout=15, proxy=proxy_url) as session:
             response = await session.request("GET", check_url)
             if response.status_code >= 400:
                 raise RuntimeError(
-                    f"{ip_family} probe returned status {response.status_code}"
+                    f"Probe returned status {response.status_code}"
                 )
 
             content = b""
             async for chunk in response.aiter_bytes():
                 content += chunk
 
-            ip = content.decode("utf-8").strip()
-            logger.info(
-                f"Detected {ip_family} for {instance.instance_id}: {ip}"
-            )
-            return ip
+            return content.decode("utf-8").strip()
 
     async def _log_process_output(
         self, instance_id: str, process: asyncio.subprocess.Process
@@ -573,6 +808,7 @@ class WarpManager:
                         try:
                             await self._start_process(instance)
                             await self._wait_for_ready(instance)
+                            await self._start_family_proxy_processes(instance)
                             await self._refresh_public_ips(instance)
                             instance.status = WarpInstanceStatus.RUNNING
                             instance.error_message = None
@@ -596,8 +832,10 @@ class WarpManager:
             return
         proxy_url = instance.proxy_url
         for account in account_manager._accounts.values():
-            if account.proxy_url == proxy_url:
+            if account.warp_instance_id == instance_id or account.proxy_url == proxy_url:
                 account.proxy_url = None
+                account.warp_instance_id = None
+                account.proxy_ip_family = None
         account_manager.save_accounts()
 
     # --- Persistence ---

@@ -1,14 +1,25 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from uuid import UUID
 import time
 
 from app.core.exceptions import OAuthExchangeError
+from app.core.config import settings
 from app.dependencies.auth import AdminAuthDep
 from app.services.account import account_manager
 from app.core.account import Account, AuthType, AccountStatus, OAuthToken
 from app.services.oauth import oauth_authenticator
+from app.services.warp import warp_manager
+
+AccountNetworkMode = Literal[
+    "inherit",
+    "direct_auto",
+    "direct_ipv4",
+    "direct_ipv6",
+    "warp",
+    "custom_proxy",
+]
 
 
 class OAuthTokenCreate(BaseModel):
@@ -30,6 +41,9 @@ class AccountUpdate(BaseModel):
     capabilities: Optional[List[str]] = None
     status: Optional[AccountStatus] = None
     proxy_url: Optional[str] = None
+    warp_instance_id: Optional[str] = None
+    proxy_ip_family: Optional[Literal["auto", "ipv4", "ipv6"]] = None
+    network_mode: Optional[Literal["inherit", "direct_auto", "direct_ipv4", "direct_ipv6"]] = None
 
 
 class OAuthCodeExchange(BaseModel):
@@ -51,6 +65,55 @@ class AccountResponse(BaseModel):
     last_used: str
     resets_at: Optional[str] = None
     proxy_url: Optional[str] = None
+    warp_instance_id: Optional[str] = None
+    proxy_ip_family: Optional[Literal["auto", "ipv4", "ipv6"]] = None
+    egress_ip: Optional[str] = None
+    network_mode: AccountNetworkMode
+
+
+class AccountEgressTestResponse(BaseModel):
+    organization_uuid: str
+    network_mode: AccountNetworkMode
+    public_ipv4: Optional[str] = None
+    public_ipv6: Optional[str] = None
+    primary_ip: Optional[str] = None
+
+
+def _resolve_account_egress_ip(account: Account) -> Optional[str]:
+    if not account.warp_instance_id:
+        if account.proxy_ip_family == "ipv4":
+            return warp_manager.get_direct_public_ip("ipv4")
+        if account.proxy_ip_family == "ipv6":
+            return warp_manager.get_direct_public_ip("ipv6")
+        if account.proxy_url == warp_manager.get_direct_proxy_url("auto"):
+            return warp_manager.get_direct_public_ip("auto")
+        if not account.proxy_url and not settings.proxy_url:
+            return warp_manager.get_direct_public_ip("auto")
+        return None
+
+    instance = warp_manager.get_instance(account.warp_instance_id)
+    if not instance:
+        return None
+
+    if account.proxy_ip_family == "ipv4":
+        return instance.public_ipv4
+    if account.proxy_ip_family == "ipv6":
+        return instance.public_ipv6
+    return instance.public_ip
+
+
+def _resolve_account_network_mode(account: Account) -> AccountNetworkMode:
+    if account.warp_instance_id:
+        return "warp"
+    if account.proxy_url == warp_manager.get_direct_proxy_url("auto"):
+        return "direct_auto"
+    if account.proxy_url == warp_manager.get_direct_proxy_url("ipv4"):
+        return "direct_ipv4"
+    if account.proxy_url == warp_manager.get_direct_proxy_url("ipv6"):
+        return "direct_ipv6"
+    if account.proxy_url:
+        return "custom_proxy"
+    return "inherit"
 
 
 def _account_to_response(account: Account) -> AccountResponse:
@@ -68,6 +131,10 @@ def _account_to_response(account: Account) -> AccountResponse:
         last_used=account.last_used.isoformat(),
         resets_at=account.resets_at.isoformat() if account.resets_at else None,
         proxy_url=account.proxy_url,
+        warp_instance_id=account.warp_instance_id,
+        proxy_ip_family=account.proxy_ip_family,
+        egress_ip=_resolve_account_egress_ip(account),
+        network_mode=_resolve_account_network_mode(account),
     )
 
 
@@ -157,13 +224,102 @@ async def update_account(
         if account.status == AccountStatus.VALID:
             account.resets_at = None
 
+    if account_data.network_mode is not None:
+        if account_data.network_mode == "inherit":
+            account.proxy_url = None
+            account.warp_instance_id = None
+            account.proxy_ip_family = None
+        elif account_data.network_mode == "direct_auto":
+            account.proxy_url = warp_manager.get_direct_proxy_url("auto")
+            account.warp_instance_id = None
+            account.proxy_ip_family = "auto"
+        elif account_data.network_mode == "direct_ipv4":
+            account.proxy_url = warp_manager.get_direct_proxy_url("ipv4")
+            account.warp_instance_id = None
+            account.proxy_ip_family = "ipv4"
+        elif account_data.network_mode == "direct_ipv6":
+            account.proxy_url = warp_manager.get_direct_proxy_url("ipv6")
+            account.warp_instance_id = None
+            account.proxy_ip_family = "ipv6"
+
     if account_data.proxy_url is not None:
         account.proxy_url = account_data.proxy_url if account_data.proxy_url else None
+        if account_data.proxy_url == "":
+            account.warp_instance_id = None
+            account.proxy_ip_family = None
+        elif account_data.proxy_url:
+            account.warp_instance_id = None
+            account.proxy_ip_family = None
+
+    if account_data.warp_instance_id is not None:
+        account.warp_instance_id = (
+            account_data.warp_instance_id if account_data.warp_instance_id else None
+        )
+
+    if account_data.proxy_ip_family is not None:
+        account.proxy_ip_family = account_data.proxy_ip_family
 
     # Save changes
     account_manager.save_accounts()
 
     return _account_to_response(account)
+
+
+@router.post("/{organization_uuid}/test-egress", response_model=AccountEgressTestResponse)
+async def test_account_egress(organization_uuid: str, _: AdminAuthDep):
+    """Test the current effective egress IP for an account."""
+    if organization_uuid not in account_manager._accounts:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    account = account_manager._accounts[organization_uuid]
+    network_mode = _resolve_account_network_mode(account)
+
+    public_ipv4: Optional[str] = None
+    public_ipv6: Optional[str] = None
+
+    proxy_url = account.proxy_url
+
+    if proxy_url:
+        try:
+            public_ipv4 = await warp_manager._probe_proxy_url(
+                proxy_url,
+                settings.warp_ip_check_url,
+            )
+        except Exception:
+            public_ipv4 = None
+
+        try:
+            public_ipv6 = await warp_manager._probe_proxy_url(
+                proxy_url,
+                settings.warp_ip_check_url_v6,
+            )
+        except Exception:
+            public_ipv6 = None
+    else:
+        effective_proxy_url = settings.proxy_url or warp_manager.get_direct_proxy_url("auto")
+        try:
+            public_ipv4 = await warp_manager._probe_proxy_url(
+                effective_proxy_url,
+                settings.warp_ip_check_url,
+            )
+        except Exception:
+            public_ipv4 = None
+
+        try:
+            public_ipv6 = await warp_manager._probe_proxy_url(
+                effective_proxy_url,
+                settings.warp_ip_check_url_v6,
+            )
+        except Exception:
+            public_ipv6 = None
+
+    return AccountEgressTestResponse(
+        organization_uuid=organization_uuid,
+        network_mode=network_mode,
+        public_ipv4=public_ipv4,
+        public_ipv6=public_ipv6,
+        primary_ip=public_ipv4 or public_ipv6,
+    )
 
 
 @router.delete("/{organization_uuid}")
