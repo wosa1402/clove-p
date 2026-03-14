@@ -31,6 +31,51 @@ class MessagesAPIRequestToolParsingTests(unittest.TestCase):
         )
 
         self.assertEqual(request.tools[0].name, "WebSearch")
+        self.assertEqual(
+            request.tools[0].input_schema,
+            {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                },
+                "required": ["query"],
+            },
+        )
+
+    def test_accepts_mcp_tool_payload_with_camel_case_input_schema(self) -> None:
+        request = MessagesAPIRequest.model_validate(
+            {
+                "model": "claude-opus-4-20250514",
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": "Call the MCP tool"}],
+                "tools": [
+                    {
+                        "type": "mcp",
+                        "name": "filesystem__read_file",
+                        "server_name": "filesystem",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                            },
+                            "required": ["path"],
+                        },
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(request.tools[0].name, "filesystem__read_file")
+        self.assertEqual(
+            request.tools[0].input_schema,
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                },
+                "required": ["path"],
+            },
+        )
 
     def test_accepts_server_web_search_tool_without_input_schema(self) -> None:
         request = MessagesAPIRequest.model_validate(

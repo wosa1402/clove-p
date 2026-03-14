@@ -157,6 +157,32 @@ class Tool(BaseModel):
     description: Optional[str] = None
     custom: Optional[CustomToolSpec] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_input_schema(cls, data: Any) -> Any:
+        """Accept alternate schema field shapes and normalize to `input_schema`."""
+        if not isinstance(data, dict):
+            return data
+
+        if data.get("input_schema") is not None:
+            return data
+
+        normalized = data.copy()
+
+        # MCP tools often expose camelCase `inputSchema`; Claude.ai web expects snake_case.
+        if normalized.get("inputSchema") is not None:
+            normalized["input_schema"] = normalized["inputSchema"]
+            return normalized
+
+        custom = normalized.get("custom")
+        if isinstance(custom, dict):
+            if custom.get("input_schema") is not None:
+                normalized["input_schema"] = custom["input_schema"]
+            elif custom.get("inputSchema") is not None:
+                normalized["input_schema"] = custom["inputSchema"]
+
+        return normalized
+
 
 class OutputConfig(BaseModel):
     """Output configuration (effort, format, etc). effort and structured outputs are now GA."""
