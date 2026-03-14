@@ -97,15 +97,10 @@ class ClaudeWebProcessor(BaseProcessor):
 
             await context.claude_session._ensure_conversation_initialized()
 
-            paprika_mode = (
-                "extended"
-                if (
-                    context.claude_session.account.is_pro
-                    and request.thinking
-                    and request.thinking.type in ("enabled", "adaptive")
-                )
-                else None
+            enable_extended_thinking = request.force_web_thinking or (
+                request.thinking and request.thinking.type in ("enabled", "adaptive")
             )
+            paprika_mode = "extended" if enable_extended_thinking else None
 
             await context.claude_session.set_paprika_mode(paprika_mode)
 

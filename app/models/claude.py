@@ -1,6 +1,8 @@
 from typing import Optional, List, Union, Literal, Dict, Any
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from enum import Enum
+
+THINK_MODEL_SUFFIX = "-think"
 
 
 class Role(str, Enum):
@@ -187,6 +189,7 @@ class Usage(BaseModel):
 
 class MessagesAPIRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
+    _force_web_thinking: bool = PrivateAttr(default=False)
     model: str = Field(default="claude-opus-4-20250514")
     messages: List[InputMessage]
     max_tokens: int = Field(default=8192, ge=1)
@@ -203,9 +206,49 @@ class MessagesAPIRequest(BaseModel):
     output_config: Optional[OutputConfig] = None
     output_format: Optional[OutputFormat] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_think_model_suffix(cls, data: Any) -> Any:
+        """Normalize `<model>-think` aliases into the base model plus web thinking."""
+        if not isinstance(data, dict):
+            return data
+
+        model = data.get("model")
+        if not isinstance(model, str) or not model.endswith(THINK_MODEL_SUFFIX):
+            return data
+
+        base_model = model[: -len(THINK_MODEL_SUFFIX)]
+        if not base_model:
+            return data
+
+        normalized = data.copy()
+        normalized["model"] = base_model
+
+        thinking = normalized.get("thinking")
+        if isinstance(thinking, dict):
+            normalized_thinking = thinking.copy()
+            if normalized_thinking.get("type") in (None, "disabled"):
+                normalized_thinking["type"] = "enabled"
+            normalized["thinking"] = normalized_thinking
+        elif thinking is None:
+            normalized["thinking"] = {"type": "enabled"}
+
+        normalized["_clove_force_web_thinking"] = True
+        return normalized
+
+    @property
+    def force_web_thinking(self) -> bool:
+        """Whether the request explicitly asked for Claude Web extended thinking."""
+        return self._force_web_thinking
+
     @model_validator(mode="after")
     def validate_thinking_tokens(self) -> "MessagesAPIRequest":
-        """Ensure max_tokens > thinking.budget_tokens when thinking is enabled."""
+        """Apply internal flags and ensure max_tokens > thinking.budget_tokens."""
+        if self.model_extra:
+            self._force_web_thinking = bool(
+                self.model_extra.pop("_clove_force_web_thinking", False)
+            )
+
         if (
             self.thinking
             and self.thinking.type == "enabled"

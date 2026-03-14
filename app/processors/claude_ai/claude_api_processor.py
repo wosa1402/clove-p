@@ -64,6 +64,12 @@ class ClaudeAPIProcessor(BaseProcessor):
             )
             return context
 
+        if context.messages_api_request.force_web_thinking:
+            logger.debug(
+                "Skipping ClaudeAPIProcessor because request forces Claude Web extended thinking"
+            )
+            return context
+
         self._insert_system_message(context)
 
         try:

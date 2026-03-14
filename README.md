@@ -210,6 +210,8 @@ response = client.messages.create(
 )
 ```
 
+如果你想直接走 Claude.ai 网页版的扩展思考开关，可以在模型名后追加 `-think` 后缀，例如 `claude-sonnet-4-6-think`。Clove 会自动把它还原成真实模型 `claude-sonnet-4-6`，并强制使用网页反代的 `Extended thinking` 模式；这对 Free 账户同样有效。
+
 ## 🤝 贡献
 
 欢迎贡献代码！如果你有好的想法或发现了问题：

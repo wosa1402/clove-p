@@ -210,6 +210,8 @@ response = client.messages.create(
 )
 ```
 
+If you want Claude.ai web extended thinking directly, append the `-think` suffix to the model name, for example `claude-sonnet-4-6-think`. Clove will normalize it back to the real model `claude-sonnet-4-6` and force Claude.ai web proxy `Extended thinking`; this also works for Free accounts.
+
 ## 🤝 Contributing
 
 Contributions are welcome! If you have great ideas or found issues:
